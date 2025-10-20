@@ -1,0 +1,5 @@
+{
+  "name": "WEB VIBER",
+  "description": "An AI-powered code generator for web developers. Enter a prompt to generate HTML, CSS, JavaScript, and PHP code in real-time, presented in a sleek, tab-based interface for easy viewing, copying, and downloading.",
+  "requestFramePermissions": []
+}
