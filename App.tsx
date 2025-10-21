@@ -2,45 +2,75 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { dracula } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import JSZip from 'jszip';
 import type { GeneratedFile, ChatMessage } from './types';
 import { startChat } from './services/geminiService';
 import type { Chat } from '@google/genai';
-import { CopyIcon, DownloadIcon, SparklesIcon, DesktopIcon, TabletIcon, MobileIcon, MaximizeIcon, RestoreIcon } from './components/Icons';
+import { 
+    CopyIcon, DownloadProjectIcon, DesktopIcon, TabletIcon, MobileIcon, XIcon, UndoIcon, RedoIcon,
+    HtmlIcon, CssIcon, JsIcon, TsIcon, JsonIcon, MdIcon, FileIcon, PreviewIcon, DownloadIcon,
+    MinimizeIcon, WindowMaximizeIcon, CloseIcon
+} from './components/Icons';
 
 type PreviewDevice = 'desktop' | 'tablet' | 'mobile';
 
-interface LoaderProps {
-  text: string;
-}
-
-const Loader: React.FC<LoaderProps> = ({ text }) => {
-    return (
-      <div className="loader-wrapper">
-        <div className="flex flex-wrap justify-center items-center px-4">
-          {text.split('').map((char, index) => (
-            <span
-              key={`${char}-${index}`}
-              className="loader-letter"
-              style={{ animationDelay: `${index * 0.05}s` }} // Faster animation delay
-            >
-              {char === ' ' ? '\u00A0' : char}
-            </span>
-          ))}
-        </div>
-        <div className="loader"></div>
-      </div>
-    );
+const customSyntaxStyle = {
+  'pre[class*="language-"]': {
+    background: '#15001f',
+    color: '#bafff8',
+    fontFamily: '"Roboto Mono", monospace',
+    fontSize: '14px',
+    margin: 0,
+    overflow: 'auto',
+    height: '100%',
+  },
+  'code[class*="language-"]': {
+    fontFamily: '"Roboto Mono", monospace',
+  },
+  'keyword': { color: '#ff4284' },
+  'string': { color: '#22ff00' },
+  'preprocessor': { color: '#22ff00' },
+  'function': { color: '#4281ff' },
+  'class-name': { color: '#4281ff' },
+  'variable': { color: '#ffae00' },
+  'operator': { color: '#ffff00' },
+  'punctuation': { color: '#e600ff' },
+  'comment': { color: '#888', fontStyle: 'italic' },
+  'property': { color: '#ffae00' },
+  'number': { color: '#ffae00' },
+  'boolean': { color: '#ff4284' },
+  'tag': { color: '#ff4284' },
+  'attr-name': { color: '#ffff00' },
+  'attr-value': { color: '#22ff00' },
 };
 
-// New component to render chat messages with potential code blocks
+
+const getFileIcon = (path: string | null): React.ReactElement => {
+    if (path === 'preview') return <PreviewIcon className="w-5 h-5 flex-shrink-0" />;
+    if (!path) return <FileIcon className="w-5 h-5 flex-shrink-0" />;
+
+    const extension = path.split('.').pop()?.toLowerCase() || '';
+    const iconProps = { className: "w-5 h-5 flex-shrink-0" };
+
+    switch (extension) {
+        case 'html': return <HtmlIcon {...iconProps} />;
+        case 'css': return <CssIcon {...iconProps} />;
+        case 'js':
+        case 'jsx': return <JsIcon {...iconProps} />;
+        case 'ts':
+        case 'tsx': return <TsIcon {...iconProps} />;
+        case 'json': return <JsonIcon {...iconProps} />;
+        case 'md': return <MdIcon {...iconProps} />;
+        default: return <FileIcon {...iconProps} />;
+    }
+};
+
 const ChatMessageContent: React.FC<{ content: string }> = ({ content }) => {
-    // This regex splits the string by ```code blocks```, keeping the delimiters
     const parts = content.split(/(```[\s\S]*?```)/g);
   
     return (
       <>
         {parts.map((part, i) => {
-          // Check if the part is a code block
           const codeBlockMatch = part.match(/```(\w+)?\n([\s\S]+)```/);
           if (codeBlockMatch) {
             const language = codeBlockMatch[1] || 'plaintext';
@@ -57,50 +87,123 @@ const ChatMessageContent: React.FC<{ content: string }> = ({ content }) => {
               </div>
             );
           }
-          // Otherwise, it's plain text
           return <span key={i}>{part}</span>;
         })}
       </>
     );
 };
 
+const FileNavigator: React.FC<{
+  files: GeneratedFile[];
+  activePath: string | null;
+  onFileClick: (path: string) => void;
+  onPreviewClick: () => void;
+  previewContentExists: boolean;
+}> = ({ files, activePath, onFileClick, onPreviewClick, previewContentExists }) => {
+  return (
+    <div className="file-navigator w-full md:w-1/3 lg:w-1/4 h-full flex flex-col min-h-0">
+      <h3 className="text-lg font-semibold p-4 border-b border-gray-800/70 flex-shrink-0 text-gray-200">
+        Project Files
+      </h3>
+      <div className="overflow-y-auto flex-grow">
+        {previewContentExists && (
+          <div
+            onClick={onPreviewClick}
+            className={`file-item text-gray-300 ${activePath === 'preview' ? 'active' : ''}`}
+            title="Preview"
+          >
+            {getFileIcon('preview')}
+            <span className="font-semibold text-blue-400">Preview</span>
+          </div>
+        )}
+        {files.map(file => (
+          <div
+            key={file.path}
+            onClick={() => onFileClick(file.path)}
+            className={`file-item text-gray-400 ${activePath === file.path ? 'active' : ''}`}
+            title={file.path}
+          >
+            {getFileIcon(file.path)}
+            <span className="truncate">{file.path}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 
 const App: React.FC = () => {
   const [currentInput, setCurrentInput] = useState<string>('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { role: 'model', content: "Hello! I'm WEB VIBER. What amazing web component can I build for you today?" }
+    { 
+      role: 'model', 
+      content: `Welcome to WEB VIBER! I'm your AI web development assistant.
+
+Here’s my approach to building your app:
+
+1. You provide a prompt describing the web app or component you want.
+2. I generate the complete code, including all necessary files (HTML, CSS, JavaScript, etc.).
+3. The files appear on the left, and the code is shown in the editor. You can also view a live preview.
+
+To get started, just type your idea into the chat box below.
+
+For example, you could ask me to 'build a responsive login page with a futuristic theme.'
+
+What would you like to create today?`
+    }
   ]);
   const [chatSession, setChatSession] = useState<Chat | null>(null);
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
-  const [activeFilename, setActiveFilename] = useState<string | null>(null);
+  const [activePath, setActivePath] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isEditingLoading, setIsEditingLoading] = useState<boolean>(false);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [currentStreamingFile, setCurrentStreamingFile] = useState<GeneratedFile | null>(null);
   const [copyStatus, setCopyStatus] = useState<string>('');
   const [previewContent, setPreviewContent] = useState<string | null>(null);
-  const [isPreviewMaximized, setIsPreviewMaximized] = useState<boolean>(false);
   const [previewDevice, setPreviewDevice] = useState<PreviewDevice>('desktop');
-  const [showCodeLoader, setShowCodeLoader] = useState<boolean>(false);
-  const [animateLoaderOut, setAnimateLoaderOut] = useState<boolean>(false);
   const [loaderText, setLoaderText] = useState('');
+  const [apiKeyMissing, setApiKeyMissing] = useState<boolean>(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [history, setHistory] = useState<GeneratedFile[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   
-  // FIX: Corrected the typo in the type definition from `HTMLDivDivElement` to `HTMLDivElement`.
   const codeContainerRef = useRef<HTMLDivElement>(null);
   const chatHistoryRef = useRef<HTMLDivElement>(null);
   const progressIntervalRef = useRef<number | null>(null);
+  const lastCodePathRef = useRef<string | null>(null);
   
-  const activeFile = generatedFiles.find(f => f.filename === activeFilename);
-  const codeToDisplay = isLoading && currentStreamingFile?.filename === activeFilename 
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
+  useEffect(() => {
+    if (!process.env.API_KEY) {
+        setApiKeyMissing(true);
+        setChatHistory(prev => {
+            const instructions = { 
+                role: 'model', 
+                content: "This app requires a Gemini API key. Please set it in your Netlify deployment.\n\nThe environment variable name is `API_KEY`.\n\nYou can set it under **Site configuration > Build & deploy > Environment**." 
+            };
+            // Avoid adding duplicate messages if one already exists
+            if (prev.some(msg => msg.content.includes("API_KEY"))) {
+                return prev;
+            }
+            return [...prev, instructions];
+        });
+    }
+  }, []);
+  
+  const activeFile = generatedFiles.find(f => f.path === activePath);
+  const codeToDisplay = isLoading && currentStreamingFile?.path === activePath 
     ? currentStreamingFile.code 
     : activeFile?.code || '';
     
   const progressMessages = useRef([
-    "Analyzing your vision...",
-    "Drafting initial structure...",
-    "Building HTML foundation...",
-    "Styling with CSS...",
-    "Adding JavaScript interactivity...",
-    "Finalizing the files..."
+    "Analyzing your vision...", "Drafting project structure...", "Generating configuration files...", "Building component tree...",
+    "Styling with CSS...", "Adding JavaScript interactivity...", "Finalizing the project files..."
   ]).current;
 
   const stopProgressMessages = useCallback(() => {
@@ -108,6 +211,7 @@ const App: React.FC = () => {
         clearInterval(progressIntervalRef.current);
         progressIntervalRef.current = null;
     }
+    setLoaderText('');
   }, []);
 
   const startProgressMessages = useCallback(() => {
@@ -120,7 +224,6 @@ const App: React.FC = () => {
     }, 2500);
   }, [progressMessages, stopProgressMessages]);
 
-
   useEffect(() => {
     if (chatHistoryRef.current) {
       chatHistoryRef.current.scrollTop = chatHistoryRef.current.scrollHeight;
@@ -130,14 +233,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (isLoading && codeContainerRef.current) {
         const element = codeContainerRef.current;
-        setTimeout(() => {
-            element.scrollTop = element.scrollHeight;
-        }, 50);
+        setTimeout(() => { element.scrollTop = element.scrollHeight; }, 50);
     }
   }, [codeToDisplay, isLoading]);
   
-  const getLanguage = (filename: string): string => {
-    const extension = filename.split('.').pop()?.toLowerCase() || '';
+  const getLanguage = (path: string): string => {
+    const extension = path.split('.').pop()?.toLowerCase() || '';
     const langMap: { [key: string]: string } = {
       js: 'javascript', html: 'html', css: 'css', php: 'php',
       ts: 'typescript', jsx: 'jsx', tsx: 'tsx', json: 'json', md: 'markdown',
@@ -146,39 +247,24 @@ const App: React.FC = () => {
   };
 
   const generatePreview = (files: GeneratedFile[]) => {
-    const htmlFile = files.find(f => f.language === 'html');
+    const htmlFile = files.find(f => f.path.endsWith('index.html'));
     if (!htmlFile) return null;
-
     let html = htmlFile.code;
     const cssFile = files.find(f => f.language === 'css');
-    if (cssFile) {
-        html = html.replace('</head>', `<style>${cssFile.code}</style></head>`);
-    }
+    if (cssFile) html = html.replace('</head>', `<style>${cssFile.code}</style></head>`);
     const jsFile = files.find(f => f.language === 'javascript');
-    if (jsFile) {
-        html = html.replace('</body>', `<script>${jsFile.code}</script></body>`);
-    }
+    if (jsFile) html = html.replace('</body>', `<script>${jsFile.code}</script></body>`);
     return html;
   };
 
   const handleSendMessage = useCallback(async () => {
-    if (!currentInput.trim() || isLoading) return;
+    if (!currentInput.trim() || isLoading || apiKeyMissing) return;
     
-    const isInitialGeneration = generatedFiles.length === 0;
-
     const newHistory: ChatMessage[] = [...chatHistory, { role: 'user', content: currentInput }];
     setChatHistory(newHistory);
     setCurrentInput('');
     setIsLoading(true);
-
-    if (isInitialGeneration) {
-        setShowCodeLoader(true);
-        setAnimateLoaderOut(false);
-        setLoaderText('Powering up Blackgift servers...');
-    } else {
-        setIsEditingLoading(true);
-    }
-    
+    startProgressMessages();
     setChatHistory(prev => [...prev, { role: 'model', content: '', isGenerating: true }]);
 
     try {
@@ -188,17 +274,10 @@ const App: React.FC = () => {
       const stream = await session.sendMessageStream({ message: currentInput });
 
       let buffer = '';
-      let firstChunkReceived = false;
       let filesBuffer: GeneratedFile[] = [...generatedFiles];
 
       for await (const chunk of stream) {
-        if (!firstChunkReceived && isInitialGeneration) {
-            firstChunkReceived = true;
-            setTimeout(() => startProgressMessages(), 1500);
-        }
-
         buffer += chunk.text;
-
         setChatHistory(prev => {
             const lastMessage = prev[prev.length - 1];
             const updatedMessage = { ...lastMessage, content: buffer, isGenerating: true };
@@ -208,20 +287,16 @@ const App: React.FC = () => {
         const fileRegex = /START_FILE: (.*?)\n([\s\S]*?)END_FILE/g;
         let lastIndex = 0;
         let match;
-        
         const rawCodeSoFar = buffer;
 
         while ((match = fileRegex.exec(rawCodeSoFar)) !== null) {
-            const filename = match[1].trim();
+            const path = match[1].trim();
             const code = match[2].trim();
-            const newFile = { filename, language: getLanguage(filename), code };
+            const newFile = { path, language: getLanguage(path), code };
             
-            const existingFileIndex = filesBuffer.findIndex(f => f.filename === filename);
-            if (existingFileIndex > -1) {
-                filesBuffer[existingFileIndex] = newFile;
-            } else {
-                filesBuffer.push(newFile);
-            }
+            const existingFileIndex = filesBuffer.findIndex(f => f.path === path);
+            if (existingFileIndex > -1) filesBuffer[existingFileIndex] = newFile;
+            else filesBuffer.push(newFile);
             lastIndex = match.index + match[0].length;
         }
 
@@ -229,107 +304,242 @@ const App: React.FC = () => {
              setGeneratedFiles([...filesBuffer]);
         }
         if (filesBuffer.length > 0) {
-           setActiveFilename(filesBuffer[filesBuffer.length-1].filename)
+            const latestPath = filesBuffer[filesBuffer.length - 1].path;
+            setActivePath(latestPath);
+            lastCodePathRef.current = latestPath;
         }
         
         const remainingBuffer = rawCodeSoFar.substring(lastIndex);
         const streamingFileMatch = /START_FILE: (.*?)\n([\s\S]*)/.exec(remainingBuffer);
 
         if (streamingFileMatch) {
-            const filename = streamingFileMatch[1].trim();
-            if (activeFilename !== filename) setActiveFilename(filename);
-            setCurrentStreamingFile({ filename, code: streamingFileMatch[2], language: getLanguage(filename) });
+            const path = streamingFileMatch[1].trim();
+            if (activePath !== path) setActivePath(path);
+            setCurrentStreamingFile({ path, code: streamingFileMatch[2], language: getLanguage(path) });
         } else {
             setCurrentStreamingFile(null);
         }
       }
       
-      stopProgressMessages();
       const finalFiles = [...filesBuffer];
       setGeneratedFiles(finalFiles);
       setCurrentStreamingFile(null);
       
       if (finalFiles.length > 0) {
-        if (isInitialGeneration) {
-            setAnimateLoaderOut(true);
-            setTimeout(() => setShowCodeLoader(false), 1000);
-        }
-        
         const preview = generatePreview(finalFiles);
         setPreviewContent(preview);
-        if (!activeFilename) setActiveFilename(finalFiles[0].filename);
 
+        const newHistory = history.slice(0, historyIndex + 1);
+        newHistory.push(finalFiles);
+        setHistory(newHistory);
+        setHistoryIndex(newHistory.length - 1);
+
+        const finalActiveFile = finalFiles.find(f => f.path === activePath)?.path || finalFiles[0].path;
+        lastCodePathRef.current = finalActiveFile;
+        if (isMobile) {
+            setActivePath('preview');
+        } else {
+            setActivePath(finalActiveFile);
+        }
       } else {
-        setShowCodeLoader(false);
          setChatHistory(prev => [...prev, { role: 'model', content: "Sorry, I couldn't generate any files from that. Could you try rephrasing?" }]);
       }
 
     } catch (e: any) {
        console.error(e);
-       setChatHistory(prev => [...prev, { role: 'model', content: e.message || "An unknown error occurred." }]);
-       setShowCodeLoader(false);
-       stopProgressMessages();
+       let errorMessage = e.message || "An unknown error occurred.";
+       if (errorMessage.includes("API_KEY") || errorMessage.includes("environment variable")) {
+           errorMessage = "The `API_KEY` environment variable is missing or invalid. Please set it in your Netlify site settings under 'Site configuration > Build & deploy > Environment'.";
+           setApiKeyMissing(true);
+       }
+       setChatHistory(prev => {
+            const historyWithoutGenerating = prev.filter(m => !m.isGenerating);
+            return [...historyWithoutGenerating, { role: 'model', content: errorMessage }];
+       });
     } finally {
       setIsLoading(false);
-      setIsEditingLoading(false);
+      stopProgressMessages();
       setChatHistory(prev => {
         if (prev.length === 0) return [];
         const lastMessage = prev[prev.length - 1];
-        if (!lastMessage) return prev;
+        if (!lastMessage || !lastMessage.isGenerating) return prev;
         const updatedMessage = { ...lastMessage, isGenerating: false };
         return [...prev.slice(0, -1), updatedMessage];
       });
     }
-  }, [currentInput, isLoading, chatHistory, chatSession, generatedFiles, activeFilename, startProgressMessages, stopProgressMessages]);
+  }, [currentInput, isLoading, chatHistory, chatSession, generatedFiles, activePath, startProgressMessages, stopProgressMessages, apiKeyMissing, isMobile, history, historyIndex]);
 
   const handleCopy = () => {
-    const file = generatedFiles.find(f => f.filename === activeFilename);
-    if (!file) return;
-    navigator.clipboard.writeText(file.code).then(() => {
+    if (!activeFile) return;
+    navigator.clipboard.writeText(activeFile.code).then(() => {
         setCopyStatus('Copied!');
         setTimeout(() => setCopyStatus(''), 2000);
     });
   };
-
-  const handleDownload = () => {
-    const file = generatedFiles.find(f => f.filename === activeFilename);
-    if (!file) return;
-    const blob = new Blob([file.code], { type: 'text/plain' });
+  
+  const handleDownloadFile = () => {
+    if (!activeFile) return;
+    const blob = new Blob([activeFile.code], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = file.filename;
+    a.href = url;
+    a.download = activeFile.path.split('/').pop() || 'download';
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    a.remove();
+  };
+
+
+  const handleDownloadProject = async () => {
+    if (generatedFiles.length === 0) return;
+    const projectName = prompt("Please enter a name for your project:", "web-viber-project");
+    if (!projectName || projectName.trim() === '') return;
+
+    setIsDownloading(true);
+    const zip = new JSZip();
+    generatedFiles.forEach(file => {
+      zip.file(file.path, file.code);
+    });
+
+    try {
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName.trim().replace(/\s+/g, '-')}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to create zip file:", error);
+      setCopyStatus('Zip failed!');
+      setTimeout(() => setCopyStatus(''), 2000);
+    } finally {
+        setIsDownloading(false);
+    }
+  };
+
+  const handleUndo = () => {
+    if (historyIndex <= 0) return;
+    const newIndex = historyIndex - 1;
+    setHistoryIndex(newIndex);
+    const previousFiles = history[newIndex];
+    setGeneratedFiles(previousFiles);
+    setPreviewContent(generatePreview(previousFiles));
+    setActivePath(previousFiles[0]?.path || null);
+  };
+
+  const handleRedo = () => {
+    if (historyIndex >= history.length - 1) return;
+    const newIndex = historyIndex + 1;
+    setHistoryIndex(newIndex);
+    const nextFiles = history[newIndex];
+    setGeneratedFiles(nextFiles);
+    setPreviewContent(generatePreview(nextFiles));
+    setActivePath(nextFiles[0]?.path || null);
   };
   
-  const currentLanguage = getLanguage(activeFilename || '');
-
   const deviceStyles: {[key in PreviewDevice]: string} = {
     desktop: 'w-full h-full',
     tablet: 'w-[768px] max-w-full h-[1024px] max-h-full rounded-lg shadow-2xl border-4 border-gray-600',
     mobile: 'w-[375px] max-w-full h-[667px] max-h-full rounded-lg shadow-2xl border-4 border-gray-600',
   };
 
-  const mainGridClass = previewContent ? isPreviewMaximized ? 'grid grid-cols-1' : 'grid grid-cols-1 md:grid-cols-2' : '';
+  const showMobilePreview = isMobile && activePath === 'preview';
+
+  const CodeEditor = () => (
+    <div className="code-card">
+      <div className="code-titlebar">
+        <span className="font-mono text-sm truncate px-4">{activePath || 'Untitled'}</span>
+        <div className="buttons">
+          <button onClick={handleUndo} disabled={historyIndex <= 0} className="hover:bg-gray-700/50 disabled:opacity-50 disabled:cursor-not-allowed" title="Undo"><UndoIcon className="w-4 h-4 fill-white"/></button>
+          <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="hover:bg-gray-700/50 disabled:opacity-50 disabled:cursor-not-allowed" title="Redo"><RedoIcon className="w-4 h-4 fill-white"/></button>
+          <button onClick={handleCopy} disabled={!activeFile} className="hover:bg-gray-700/50 disabled:opacity-50" title="Copy code"><CopyIcon className="w-4 h-4"/></button>
+          <button onClick={handleDownloadFile} disabled={!activeFile} className="hover:bg-gray-700/50 disabled:opacity-50" title="Download file"><DownloadIcon className="w-4 h-4"/></button>
+          <div className="w-px h-5 bg-gray-600 mx-1"></div>
+          <button className="minimize-btn" title="Minimize"><MinimizeIcon /></button>
+          <button className="maximize-btn" title="Maximize"><WindowMaximizeIcon /></button>
+          <button className="close-btn" title="Close"><CloseIcon /></button>
+        </div>
+      </div>
+      <div ref={codeContainerRef} className="code-content">
+        <SyntaxHighlighter
+          language={getLanguage(activePath || '')}
+          style={customSyntaxStyle as any}
+          showLineNumbers
+          wrapLines
+          lineNumberStyle={{ minWidth: '2.25em', color: '#858585', backgroundColor: 'transparent' }}
+          customStyle={{ margin: 0, padding: 0, backgroundColor: 'transparent' }}
+          codeTagProps={{ style: { fontFamily: '"Roboto Mono", monospace', fontSize: '0.9em' } }}
+        >
+          {codeToDisplay}
+        </SyntaxHighlighter>
+        {isLoading && currentStreamingFile && <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-1"></span>}
+      </div>
+    </div>
+  );
+
+  const Previewer = () => (
+    <div className="code-card animate-fade-in-right">
+      <div className="code-titlebar">
+        <div className="flex items-center space-x-1 p-1 bg-gray-900/50 rounded-md ml-2">
+            {(['desktop', 'tablet', 'mobile'] as PreviewDevice[]).map(device => (
+                <button key={device} onClick={() => setPreviewDevice(device)} title={device.charAt(0).toUpperCase() + device.slice(1)}
+                    className={`p-1 rounded transition-colors ${previewDevice === device ? 'bg-blue-600/50 text-white' : 'text-gray-400 hover:bg-gray-700/50'}`}>
+                    {device === 'desktop' && <DesktopIcon className="w-5 h-5"/>}
+                    {device === 'tablet' && <TabletIcon className="w-5 h-5"/>}
+                    {device === 'mobile' && <MobileIcon className="w-5 h-5"/>}
+                </button>
+            ))}
+        </div>
+        <div className="buttons">
+            <button className="minimize-btn" title="Minimize"><MinimizeIcon /></button>
+            <button className="maximize-btn" title="Maximize"><WindowMaximizeIcon /></button>
+            <button className="close-btn" title="Close"><CloseIcon /></button>
+        </div>
+      </div>
+      <div className="p-4 flex items-center justify-center overflow-auto code-content bg-gray-900/50">
+        <div className={`bg-white transition-all duration-300 ease-in-out ${deviceStyles[previewDevice]}`}>
+          <iframe srcDoc={previewContent || ''} title="Live Preview" className="w-full h-full border-none"/>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="bg-[#131314] text-gray-200 flex flex-col h-screen max-h-screen">
-      <header className="flex items-center justify-between p-4 border-b border-gray-800/70 flex-shrink-0 relative">
+      <header className="flex items-center justify-between p-4 border-b border-gray-800/70 flex-shrink-0">
         <div className="flex flex-col">
             <h1 className="text-2xl font-bold tracking-wider text-white">WEB<span className="text-blue-400">VIBER</span></h1>
             <span className="text-xs text-gray-500 tracking-widest -mt-1 font-mono">BLACKGIFT TECH</span>
         </div>
-        {isEditingLoading && (
-            <div className="header-loader animate-fade-in-right">
-                Updating Code...
-                <span className="dot-pulse"></span>
-            </div>
-        )}
+        <div className="flex items-center gap-4">
+            {(isLoading || isDownloading) && (
+                <div className="flex items-center gap-3 animate-fade-in-right">
+                    <div className="loader"></div>
+                    <span key={loaderText} className="text-sm text-gray-400 font-mono animate-text-focus-in">
+                        {isLoading ? loaderText : 'Downloading...'}
+                    </span>
+                </div>
+            )}
+            {!isLoading && !isDownloading && (
+                 <button
+                    onClick={handleDownloadProject}
+                    disabled={generatedFiles.length === 0}
+                    className="flex items-center gap-2 text-gray-300 hover:text-blue-400 disabled:text-gray-600 disabled:cursor-not-allowed transition-colors px-3 py-1.5 rounded-md hover:bg-gray-800/60"
+                    title="Download Project as .zip"
+                >
+                    <DownloadProjectIcon className="w-5 h-5" />
+                    <span className="text-sm font-medium">Download Project</span>
+                </button>
+            )}
+        </div>
       </header>
       
-      <div className="flex flex-col md:flex-row flex-grow min-h-0">
-        <aside className="w-full md:w-1/3 flex flex-col p-0 border-b md:border-b-0 md:border-r border-gray-800/70">
+      <div className="flex flex-col-reverse md:flex-row flex-grow min-h-0">
+        <aside className="w-full md:w-1/3 lg:w-2/5 flex flex-col p-0 border-t md:border-t-0 md:border-r border-gray-800/70">
           <div className="chat-container">
             <div ref={chatHistoryRef} className="chat-history">
               {chatHistory.map((msg, index) => (
@@ -344,23 +554,14 @@ const App: React.FC = () => {
                 <textarea
                     value={currentInput}
                     onChange={(e) => setCurrentInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                    placeholder="e.g., A responsive login form..."
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+                    placeholder={apiKeyMissing ? "API Key must be configured in Netlify." : "e.g., A responsive login form..."}
                     className="w-full bg-gray-800/60 border border-gray-700/80 rounded-lg p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow resize-none text-gray-200 placeholder-gray-500 chat-textarea"
-                    disabled={isLoading}
-                    rows={1}
-                />
+                    disabled={isLoading || apiKeyMissing} rows={1} />
                 <button
-                  onClick={handleSendMessage}
-                  disabled={isLoading || !currentInput.trim()}
+                  onClick={handleSendMessage} disabled={isLoading || !currentInput.trim() || apiKeyMissing}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-full hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed transition-all"
-                  title="Send message"
-                >
+                  title="Send message">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
                 </button>
               </div>
@@ -368,90 +569,52 @@ const App: React.FC = () => {
           </div>
         </aside>
 
-        <main className={`w-full md:w-2/3 bg-[#1e1e1e] min-w-0 transition-all duration-500 md:min-h-0 ${mainGridClass}`}>
-          <div className={`flex flex-col min-w-0 min-h-0 ${isPreviewMaximized ? 'hidden' : ''}`}>
-            {(generatedFiles.length > 0) ? (
-              <>
-                <div className="flex p-2 space-x-2 border-b border-gray-800/70 bg-[#131314] flex-shrink-0 overflow-x-auto">
-                    {[...new Set([...generatedFiles.map(f => f.filename), currentStreamingFile?.filename].filter(Boolean))]
-                      .map(filename => {
-                        const file = generatedFiles.find(f => f.filename === filename) || currentStreamingFile;
-                        return file && (
-                          <button
-                              key={file.filename}
-                              onClick={() => setActiveFilename(file.filename)}
-                              className={`py-2 px-4 text-sm rounded-md transition-colors flex-shrink-0 font-medium ${activeFilename === file.filename ? 'bg-blue-600/30 text-blue-300' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}`}
-                          >{file.filename}</button>
-                        )
-                    })}
-                </div>
-                
-                {activeFilename && !isLoading && generatedFiles.length > 0 && (
-                  <div className="flex justify-between items-center p-3 bg-gray-800/40 border-b border-gray-800/70 flex-shrink-0">
-                    <span className="text-sm text-gray-400 font-mono">{activeFilename}</span>
-                    <div className="flex items-center space-x-4">
-                      <span className={`text-sm transition-opacity duration-300 font-medium ${copyStatus ? 'opacity-100' : 'opacity-0'} ${copyStatus === 'Copied!' ? 'text-green-400' : 'text-red-400'}`}>{copyStatus}</span>
-                      <button onClick={handleCopy} className="text-gray-400 hover:text-white transition-colors" title="Copy code"><CopyIcon className="w-5 h-5"/></button>
-                      <button onClick={handleDownload} className="text-gray-400 hover:text-white transition-colors" title="Download file"><DownloadIcon className="w-5 h-5"/></button>
+        <main className="relative w-full md:w-2/3 lg:w-3/5 flex flex-col md:flex-row min-h-0">
+          <div className={`flex flex-col md:flex-row flex-grow min-h-0 ${showMobilePreview ? 'hidden' : ''}`}>
+            <FileNavigator
+              files={generatedFiles}
+              activePath={activePath}
+              onFileClick={setActivePath}
+              onPreviewClick={() => setActivePath('preview')}
+              previewContentExists={!!previewContent}
+            />
+            <div className="w-full md:flex-grow flex flex-col min-w-0 min-h-0">
+              {generatedFiles.length === 0 ? (
+                <div className="code-card">
+                  <div className="code-titlebar">
+                    <span className="font-mono text-sm truncate px-4">Code Canvas</span>
+                     <div className="buttons">
+                        <button className="minimize-btn" title="Minimize"><MinimizeIcon /></button>
+                        <button className="maximize-btn" title="Maximize"><WindowMaximizeIcon /></button>
+                        <button className="close-btn" title="Close"><CloseIcon /></button>
                     </div>
                   </div>
-                )}
-                <div className="relative h-[60vh] md:h-auto md:flex-grow min-h-0 bg-[#1e1e1e] font-mono">
-                  <div ref={codeContainerRef} className="absolute inset-0 overflow-auto">
-                    <div className="p-4 text-sm relative">
-                      <SyntaxHighlighter language={currentLanguage} style={dracula} showLineNumbers wrapLines
-                        lineNumberStyle={{ minWidth: '2.25em', color: '#858585' }}
-                        customStyle={{ margin: 0, padding: 0, backgroundColor: 'transparent', fontFamily: '"Roboto Mono", monospace' }}>
-                        {codeToDisplay}
-                      </SyntaxHighlighter>
-                      {isLoading && currentStreamingFile && <span className="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-1"></span>}
-                    </div>
+                  <div className="flex flex-col items-center justify-center h-full text-center p-8 code-content">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                    <h2 className="text-xl font-semibold text-white">Code Canvas</h2>
+                    <p className="mt-1 text-gray-400">Your generated code will appear here.</p>
                   </div>
-                   {showCodeLoader && (
-                        <div className={`code-loader-container ${animateLoaderOut ? 'animate-slide-out-right' : ''}`}>
-                            <Loader text={loaderText} />
-                        </div>
-                    )}
                 </div>
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center p-8 md:border-r border-gray-800/70">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-gray-600 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
-                <h2 className="text-xl font-semibold text-white">Code Canvas</h2>
-                <p className="mt-1 text-gray-400">Your generated code will appear here.</p>
-                {showCodeLoader && (
-                    <div className={`code-loader-container ${animateLoaderOut ? 'animate-slide-out-right' : ''}`}>
-                        <Loader text={loaderText} />
-                    </div>
-                )}
-              </div>
-            )}
+              ) : activePath === 'preview' ? (
+                <Previewer />
+              ) : (
+                <CodeEditor />
+              )}
+            </div>
           </div>
-            {previewContent && (
-              <div className="flex flex-col min-w-0 min-h-0 border-t md:border-t-0 md:border-l border-gray-800/70 animate-fade-in-right">
-                <div className="flex justify-between items-center p-2 bg-gray-800/40 border-b border-gray-800/70 flex-shrink-0">
-                    <div className="flex items-center space-x-1 p-1 bg-gray-900/50 rounded-md">
-                        {(['desktop', 'tablet', 'mobile'] as PreviewDevice[]).map(device => (
-                            <button key={device} onClick={() => setPreviewDevice(device)} title={device.charAt(0).toUpperCase() + device.slice(1)}
-                                className={`p-1 rounded transition-colors ${previewDevice === device ? 'bg-blue-600/50 text-white' : 'text-gray-400 hover:bg-gray-700/50'}`}>
-                                {device === 'desktop' && <DesktopIcon className="w-5 h-5"/>}
-                                {device === 'tablet' && <TabletIcon className="w-5 h-5"/>}
-                                {device === 'mobile' && <MobileIcon className="w-5 h-5"/>}
-                            </button>
-                        ))}
-                    </div>
-                    <button onClick={() => setIsPreviewMaximized(!isPreviewMaximized)} title={isPreviewMaximized ? 'Restore' : 'Maximize'}
-                        className="p-2 rounded text-gray-400 hover:bg-gray-700/50 hover:text-white transition-colors">
-                        {isPreviewMaximized ? <RestoreIcon className="w-5 h-5"/> : <MaximizeIcon className="w-5 h-5"/>}
-                    </button>
-                </div>
-                <div className="h-[80vh] md:h-auto md:flex-grow p-4 bg-gray-900/50 flex items-center justify-center overflow-auto">
-                    <div className={`bg-white transition-all duration-300 ease-in-out ${deviceStyles[previewDevice]}`}>
-                       <iframe srcDoc={previewContent} title="Live Preview" className="w-full h-full border-none"/>
-                    </div>
-                </div>
+
+          {showMobilePreview && previewContent && (
+              <div className="mobile-preview-overlay bg-[#1e1e1e] animate-fade-in-right">
+                  <div className="flex justify-between items-center p-2 bg-gray-800/40 border-b border-gray-800/70 flex-shrink-0">
+                      <span className="text-sm font-medium text-white px-2">Preview</span>
+                      <button onClick={() => setActivePath(lastCodePathRef.current)} title="Close Preview"
+                          className="p-2 rounded-full text-gray-300 bg-gray-700/50 hover:bg-gray-600/80 hover:text-white transition-colors">
+                          <XIcon className="w-5 h-5"/>
+                      </button>
+                  </div>
+                  <iframe srcDoc={previewContent} title="Mobile Preview" className="w-full h-full border-none bg-white"/>
               </div>
-            )}
+          )}
         </main>
       </div>
     </div>
